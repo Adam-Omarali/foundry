@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Foundry",
+  "version": "1.0",
+  "description": "Save sites for later",
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus",
+    "identity",
+    "notifications"
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+F",
+        "mac": "Command+Shift+F"
+      },
+      "description": "Open Foundry popup"
+    }
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [{
+    "resources": ["utils.js", "config.js"],
+    "matches": ["<all_urls>"]
+  }],
+  "oauth2": {
+    "client_id": "634531581191-jc35bcnq384j7vvbrau2p71uutcojohu.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.googleapis.com https://apis.google.com https://www.gstatic.com http://localhost:8080"
+  }
+}
