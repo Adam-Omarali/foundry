@@ -190,7 +190,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return {
               title: document.title,
               url: window.location.href,
-              raw_text: document.body.innerText.split("Related"),
+              raw_text: document.body.innerText,
               type: "youtube",
             };
           }

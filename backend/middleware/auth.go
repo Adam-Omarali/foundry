@@ -4,35 +4,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"foundry/backend/db"
+	"io"
 	"net/http"
-	"os"
 )
 
 func VerifyGoogleToken(token string) (map[string]interface{}, error) {
-	res, err := http.Get("https://oauth2.googleapis.com/tokeninfo?access_token=" + token)
-	if err != nil || res.StatusCode != 200 {
-		fmt.Println("Error:", err)
+	res, err := http.Get("https://www.googleapis.com/oauth2/v3/userinfo?access_token=" + token)
+	if err != nil {
+		fmt.Println("Error making request to Google:", err)
 		return nil, err
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode != 200 {
+		body, _ := io.ReadAll(res.Body)
+		fmt.Printf("Error response from Google: %s\n", string(body))
+		return nil, fmt.Errorf("invalid token: status code %d", res.StatusCode)
+	}
+
 	var info map[string]interface{}
 	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
-		fmt.Println("Error:", err)
+		fmt.Println("Error decoding response:", err)
 		return nil, err
 	}
 
-	fmt.Println("Info:", info)
-	// ✅ Check audience matches your Chrome app's client ID
-	expectedAudience := os.Getenv("GOOGLE_CLIENT_ID")
-	if expectedAudience == "" {
-		return nil, fmt.Errorf("GOOGLE_CLIENT_ID environment variable not set")
-	}
-	if info["aud"] != expectedAudience {
-		return nil, http.ErrNoCookie
+	fmt.Println("Google user info:", info)
+
+	// Verify the email is verified
+	if verified, ok := info["email_verified"].(bool); !ok || !verified {
+		fmt.Println("Email not verified")
+		return nil, fmt.Errorf("email not verified")
 	}
 
-	db.InsetUser(info["email"].(string), "free")
+	// Get the email
+	email, ok := info["email"].(string)
+	if !ok {
+		fmt.Println("Email not found in user info")
+		return nil, fmt.Errorf("email not found in token")
+	}
+
+	// Insert new user or update existing user's last sign-in
+	db.InsetUser(email, "free")
+	db.SignInUser(email)
 
 	return info, nil
 }

@@ -75,3 +75,18 @@ func SignInUser(email string) int {
 	}
 	return user.id
 }
+
+func GetUserId(email string) int {
+	database := GetDB()
+	defer database.Close()
+
+	query := `
+	SELECT id FROM users WHERE user_email = $1
+	`
+	var id int
+	err := database.QueryRow(query, email).Scan(&id)
+	if err != nil {
+		log.Fatal("Error getting user id:", err)
+	}
+	return id
+}

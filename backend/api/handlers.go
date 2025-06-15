@@ -12,6 +12,7 @@ import (
 	"foundry/backend/utils"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 )
 
@@ -38,13 +39,23 @@ func SignInHandler(w http.ResponseWriter, r *http.Request) {
 	user, err := middleware.VerifyGoogleToken(token)
 
 	if err != nil {
+		fmt.Println("Error verifying token:", err)
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
 
+	// Check if email exists in user info
+	email, ok := user["email"].(string)
+	if !ok {
+		fmt.Println("Error: email not found in user info")
+		http.Error(w, "Invalid user info", http.StatusInternalServerError)
+		return
+	}
+
 	// Generate JWT token
-	jwt, err := utils.GenerateJWT(user["email"].(string))
+	jwt, err := utils.GenerateJWT(email)
 	if err != nil {
+		fmt.Println("Error generating JWT:", err)
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
@@ -53,7 +64,7 @@ func SignInHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"token": jwt,
-		"email": user["email"].(string),
+		"email": email,
 	})
 }
 
@@ -109,9 +120,10 @@ func RememberHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("Type of raw_text:", reflect.TypeOf(req["raw_text"]))
+
 	var rawText string = req["raw_text"].(string)
 
-	fmt.Println("Req:", strings.Split(req["url"].(string), "v=")[1])
 	if req["type"] == "youtube" {
 		rawText = youtube.GetVideoData(strings.Split(req["url"].(string), "v=")[1])
 	}
@@ -157,4 +169,51 @@ func RememberHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("Summary:", summary)
 	// fmt.Println("Embedding:", embedding)
+}
+
+func GetDocumentsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		http.Error(w, "Missing token", http.StatusUnauthorized)
+		return
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	user, err := utils.VerifyJWT(token)
+	if err != nil {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	var req map[string]interface{}
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	query := req["query"].(string)
+
+	embeddingService, err := embeddings.NewEmbeddingService(os.Getenv("GOOGLE_API_KEY"))
+	if err != nil {
+		fmt.Println("Error initializing embedding service:", err)
+		http.Error(w, "Failed to initialize embedding service", http.StatusInternalServerError)
+		return
+	}
+
+	embedding, err := embeddingService.GetEmbeddingArray(r.Context(), query)
+	if err != nil {
+		http.Error(w, "Failed to generate embedding", http.StatusInternalServerError)
+		return
+	}
+
+	documents := db.GetDocuments(user["user_id"].(int), embedding)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(documents)
 }
