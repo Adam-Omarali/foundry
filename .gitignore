@@ -9,4 +9,5 @@ chrome-extension/config.js
 .DS_Store
 Thumbs.db 
 .env
+.env.local
 client_secret.json
