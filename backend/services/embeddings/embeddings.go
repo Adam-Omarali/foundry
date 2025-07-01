@@ -39,7 +39,6 @@ func (s *EmbeddingService) GetEmbedding(ctx context.Context, text string) ([]flo
 		contents,
 		nil,
 	)
-	fmt.Println("Result:", result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate embedding: %v", err)
 	}

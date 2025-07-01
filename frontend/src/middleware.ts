@@ -18,14 +18,36 @@ export async function middleware(request: NextRequest) {
   })
   console.log('Session status:', session ? 'Authenticated' : 'Not authenticated')
 
-  // If no session, redirect to signin (except for public paths)
-  if (!isPublicPath && !session) {
+  // If we have a session token, validate it against the API
+  let isTokenValid = false
+  if (session?.accessToken) {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/signin`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.accessToken}`,
+        },
+      })
+      isTokenValid = response.ok
+      console.log('API token validation:', isTokenValid ? 'Valid' : 'Invalid')
+    } catch (error) {
+      console.error('Error validating token with API:', error)
+      isTokenValid = false
+    }
+  }
+
+  console.log('isTokenValid:', isTokenValid)
+  console.log('session:', session)
+
+  // If no valid session, redirect to signin (except for public paths)
+  if (!isPublicPath && (!session || !isTokenValid)) {
     console.log('Redirecting unauthenticated user to signin')
     return NextResponse.redirect(new URL('/signin', request.url))
   }
 
-  // Redirect authenticated users away from public paths
-  if (isPublicPath && session) {
+  // Redirect authenticated users away from public paths when they have valid tokens
+  // This allows failed signin attempts to stay on the signin page
+  if ((path === '/signin' || path === '/signup') && session && isTokenValid) {
     console.log('Redirecting authenticated user from public path to home')
     return NextResponse.redirect(new URL('/', request.url))
   }
