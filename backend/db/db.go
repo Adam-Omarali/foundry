@@ -18,6 +18,5 @@ func GetDB() *sql.DB {
 	if err = db.Ping(); err != nil {
 		log.Fatal("Error connecting to DB:", err)
 	}
-
 	return db
 }

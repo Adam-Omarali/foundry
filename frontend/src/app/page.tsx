@@ -22,7 +22,7 @@ const LabelInputContainer = ({
 export default function Home() {
   const { accessToken, jwt, isAuthenticated, isLoading, user } = useAuth();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState<any[]>([]);
 
   const handleKeyPress = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && query.trim() && jwt) {
@@ -41,10 +41,39 @@ export default function Home() {
         }
 
         const data = await response.json();
+        console.log(data);
         setResults(data);
       } catch (error) {
         console.error("Error fetching documents:", error);
       }
+    }
+  };
+
+  const handleMarkAsRead = async (documentId: number) => {
+    if (!jwt) return;
+
+    try {
+      const response = await fetch("http://localhost:8080/api/documents/read", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: JSON.stringify({ document_id: documentId }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to mark document as read");
+      }
+
+      // Update the local state to reflect the change
+      setResults((prevResults) =>
+        prevResults.map((doc: any) =>
+          doc.id === documentId ? { ...doc, read: true } : doc
+        )
+      );
+    } catch (error) {
+      console.error("Error marking document as read:", error);
     }
   };
 
@@ -53,7 +82,7 @@ export default function Home() {
       <LabelInputContainer className="max-w-2xl w-full mb-8">
         <Input
           id="search"
-          placeholder="Search your documents..."
+          placeholder=""
           type="text"
           autoComplete="off"
           value={query}
@@ -62,17 +91,27 @@ export default function Home() {
         />
       </LabelInputContainer>
 
-      {results.length > 0 && (
+      {results && results.length > 0 && (
         <div className="space-y-4 w-[90%] mx-auto">
-          {results.map((doc: any) => (
-            <DocumentCard
-              key={doc.id}
-              title={doc.title}
-              url={doc.url}
-              content={doc.content}
-              createdAt={doc.created_at}
-            />
-          ))}
+          {results
+            .sort((a, b) => {
+              // Sort unread documents first (false comes before true)
+              if (a.read !== b.read) {
+                return a.read ? 1 : -1;
+              }
+              return 0;
+            })
+            .map((doc: any) => (
+              <DocumentCard
+                key={doc.id}
+                id={doc.id}
+                title={doc.title}
+                url={doc.url}
+                content={doc.content}
+                read={doc.read}
+                onMarkAsRead={handleMarkAsRead}
+              />
+            ))}
         </div>
       )}
     </div>

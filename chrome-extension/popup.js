@@ -229,7 +229,19 @@ document.addEventListener('DOMContentLoaded', function() {
       });
 
       if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
+        // Try to parse the error response
+        try {
+          const errorData = await response.json();
+          if (response.status === 403 && errorData.error === "Document limit reached") {
+            statusElement.textContent = 'You\'ve reached your free plan limit. Please upgrade to add more documents.';
+          } else {
+            statusElement.textContent = `Error: ${errorData.message || 'Failed to save site'}`;
+          }
+        } catch (parseError) {
+          // If we can't parse the error response, show a generic message
+          statusElement.textContent = `Error: Failed to save site (${response.status})`;
+        }
+        return;
       }
       
       statusElement.textContent = 'Site content scraped successfully!';

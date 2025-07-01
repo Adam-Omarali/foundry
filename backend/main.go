@@ -8,6 +8,7 @@ import (
 	"foundry/backend/utils"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/joho/godotenv"
 )
@@ -25,12 +26,18 @@ func main() {
 		log.Fatal("Error initializing JWT:", err)
 	}
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	// youtube.GetVideoData()
 
 	http.HandleFunc("/api/signin", middleware.EnableCORS(api.SignInHandler))
 	http.HandleFunc("/api/remember", middleware.EnableCORS(api.RememberHandler))
 	http.HandleFunc("/api/verifytoken", middleware.EnableCORS(api.VerifyJWTHandler))
 	http.HandleFunc("/api/documents", middleware.EnableCORS(api.GetDocumentsHandler))
-	fmt.Println("Server listening on :8080")
-	http.ListenAndServe(":8080", nil)
+	http.HandleFunc("/api/documents/read", middleware.EnableCORS(api.MarkDocumentAsReadHandler))
+	fmt.Println("Server listening on :" + port)
+	http.ListenAndServe("0.0.0.0:"+port, nil)
 }

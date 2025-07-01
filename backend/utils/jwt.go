@@ -50,9 +50,14 @@ func VerifyJWT(tokenStr string) (map[string]interface{}, error) {
 
 	if claims, ok := token.Claims.(*FoundryClaims); ok && token.Valid {
 		userId := db.SignInUser(claims.Email)
+
+		// Get user information including plan
+		user := db.GetUserByEmail(claims.Email)
+
 		ret := map[string]interface{}{
 			"user_id": userId,
 			"email":   claims.Email,
+			"plan":    user.Plan,
 		}
 		return ret, nil
 	} else {

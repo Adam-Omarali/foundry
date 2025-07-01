@@ -30,7 +30,7 @@ func NewLLMService(apiKey string) (*LLMService, error) {
 
 // GenerateText generates text using Gemini
 func (s *LLMService) GenerateText(ctx context.Context, prompt string) (string, error) {
-	prompt += " Please summarize the following text in a concise manner. This summary will be used to create an embedding for the document. The goal is to make the content indexable and searchable with fuzzy search. Ignore anything related to advertising."
+	prompt += " Please summarize the following text in a concise manner. This summary will be used to create an embedding for the document. The goal is to make the content indexable and searchable with fuzzy search. Ignore anything related to advertising. Do not make the summary generic, try and highlight the most important and unique parts of the text."
 	resp, err := s.client.Models.GenerateContent(ctx, "gemini-2.0-flash", genai.Text(prompt), nil)
 
 	if err != nil {

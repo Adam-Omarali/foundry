@@ -70,12 +70,30 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
                     message: 'Successfully signed in and saved page!'
                   });
                 } else {
-                  console.log(res)
-                  chrome.notifications.create({
-                    type: 'basic', 
-                    iconUrl: 'icon.png',
-                    title: 'Foundry',
-                    message: 'Signed in but failed to save page. Please try again.'
+                  // Try to parse the error response
+                  res.json().then(errorData => {
+                    if (res.status === 403 && errorData.error === "Document limit reached") {
+                      chrome.notifications.create({
+                        type: 'basic',
+                        iconUrl: 'icon.png',
+                        title: 'Foundry',
+                        message: 'You\'ve reached your free plan limit. Please upgrade to add more documents.'
+                      });
+                    } else {
+                      chrome.notifications.create({
+                        type: 'basic',
+                        iconUrl: 'icon.png',
+                        title: 'Foundry',
+                        message: errorData.message || 'Signed in but failed to save page. Please try again.'
+                      });
+                    }
+                  }).catch(() => {
+                    chrome.notifications.create({
+                      type: 'basic', 
+                      iconUrl: 'icon.png',
+                      title: 'Foundry',
+                      message: 'Signed in but failed to save page. Please try again.'
+                    });
                   });
                 }
               });
@@ -177,12 +195,32 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
                 message: 'Page saved successfully'
               });
             } else {
-              console.error("Failed to save page");
-              chrome.notifications.create({
-                type: 'basic',
-                iconUrl: 'icon.png',
-                title: 'Foundry',
-                message: 'Failed to save page'
+              // Try to parse the error response
+              response.json().then(errorData => {
+                console.log("Error data:", errorData);
+                if (response.status === 403 && errorData.error === "Document limit reached") {
+                  chrome.notifications.create({
+                    type: 'basic',
+                    iconUrl: 'icon.png',
+                    title: 'Foundry',
+                    message: 'You\'ve reached your free plan limit. Please upgrade to add more documents.'
+                  });
+                } else {
+                  chrome.notifications.create({
+                    type: 'basic',
+                    iconUrl: 'icon.png',
+                    title: 'Foundry',
+                    message: errorData.message || 'Failed to save page'
+                  });
+                }
+              }).catch(() => {
+                // If we can't parse the error response, show a generic message
+                chrome.notifications.create({
+                  type: 'basic',
+                  iconUrl: 'icon.png',
+                  title: 'Foundry',
+                  message: 'Failed to save page'
+                });
               });
             }
           }).catch(error => {

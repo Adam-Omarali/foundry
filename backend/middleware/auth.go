@@ -28,8 +28,6 @@ func VerifyGoogleToken(token string) (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	fmt.Println("Google user info:", info)
-
 	// Verify the email is verified
 	if verified, ok := info["email_verified"].(bool); !ok || !verified {
 		fmt.Println("Email not verified")
@@ -44,7 +42,7 @@ func VerifyGoogleToken(token string) (map[string]interface{}, error) {
 	}
 
 	// Insert new user or update existing user's last sign-in
-	db.InsetUser(email, "free")
+	db.InsertUser(email, "free")
 	db.SignInUser(email)
 
 	return info, nil

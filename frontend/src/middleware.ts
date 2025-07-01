@@ -18,15 +18,16 @@ export async function middleware(request: NextRequest) {
   })
   console.log('Session status:', session ? 'Authenticated' : 'Not authenticated')
 
-  // Redirect logic
-  if (isPublicPath && session) {
-    console.log('Redirecting authenticated user from public path to home')
-    return NextResponse.redirect(new URL('/', request.url))
-  }
-
+  // If no session, redirect to signin (except for public paths)
   if (!isPublicPath && !session) {
     console.log('Redirecting unauthenticated user to signin')
     return NextResponse.redirect(new URL('/signin', request.url))
+  }
+
+  // Redirect authenticated users away from public paths
+  if (isPublicPath && session) {
+    console.log('Redirecting authenticated user from public path to home')
+    return NextResponse.redirect(new URL('/', request.url))
   }
 
   return NextResponse.next()

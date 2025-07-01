@@ -12,7 +12,6 @@ import (
 	"foundry/backend/utils"
 	"net/http"
 	"os"
-	"reflect"
 	"strings"
 )
 
@@ -30,7 +29,6 @@ func SignInHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	authHeader := r.Header.Get("Authorization")
-	fmt.Println("Auth header:", authHeader)
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		http.Error(w, "Missing token", http.StatusUnauthorized)
 		return
@@ -120,8 +118,6 @@ func RememberHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println("Type of raw_text:", reflect.TypeOf(req["raw_text"]))
-
 	var rawText string = req["raw_text"].(string)
 
 	if req["type"] == "youtube" {
@@ -132,9 +128,18 @@ func RememberHandler(w http.ResponseWriter, r *http.Request) {
 
 	// userId := user["user_id"].(int)
 	// email := user["email"].(string)
-	fmt.Println("User:", user)
 
-	// db.InsertDocument(user["user_id"].(int), req["title"].(string), req["url"].(string), req["raw_text"].(string))
+	// Check if user can add more documents
+	if err := db.CanAddDocument(user["user_id"].(int), user["plan"].(string)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "Document limit reached",
+			"message": "You've reached your free plan limit. Please upgrade to add more documents.",
+			"plan":    user["plan"],
+		})
+		return
+	}
 
 	llmService, err := llm.NewLLMService(os.Getenv("GOOGLE_API_KEY"))
 	if err != nil {
@@ -165,10 +170,7 @@ func RememberHandler(w http.ResponseWriter, r *http.Request) {
 
 	db.InsertDocument(user["user_id"].(int), req["title"].(string), req["url"].(string), summary, embedding)
 
-	// fmt.Println("Embedding:", embedding)
-
 	fmt.Println("Summary:", summary)
-	// fmt.Println("Embedding:", embedding)
 }
 
 func GetDocumentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -212,8 +214,52 @@ func GetDocumentsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	documents := db.GetDocuments(user["user_id"].(int), embedding)
+	documents := db.GetDocuments(user["user_id"].(int), embedding, query)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(documents)
+}
+
+func MarkDocumentAsReadHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		http.Error(w, "Missing token", http.StatusUnauthorized)
+		return
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	user, err := utils.VerifyJWT(token)
+	if err != nil {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	var req map[string]interface{}
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	documentId, ok := req["document_id"].(float64)
+	if !ok {
+		http.Error(w, "Missing or invalid document_id", http.StatusBadRequest)
+		return
+	}
+
+	err = db.MarkDocumentAsRead(user["user_id"].(int), int(documentId))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Document marked as read successfully",
+	})
 }
