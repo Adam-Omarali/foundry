@@ -20,9 +20,18 @@ const LabelInputContainer = ({
 };
 
 export default function Home() {
-  const { accessToken, jwt, isAuthenticated, isLoading, user } = useAuth();
+  const { jwt } = useAuth();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<any[]>([]);
+
+  const sortedResults = (results: any[]) => {
+    return results.sort((a, b) => {
+      if (a.read !== b.read) {
+        return a.read ? 1 : -1;
+      }
+      return 0;
+    });
+  };
 
   const handleKeyPress = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && query.trim() && jwt) {
@@ -87,31 +96,23 @@ export default function Home() {
           autoComplete="off"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyUp={handleKeyPress}
         />
       </LabelInputContainer>
 
       {results && results.length > 0 && (
         <div className="space-y-4 w-[90%] mx-auto">
-          {results
-            .sort((a, b) => {
-              // Sort unread documents first (false comes before true)
-              if (a.read !== b.read) {
-                return a.read ? 1 : -1;
-              }
-              return 0;
-            })
-            .map((doc: any) => (
-              <DocumentCard
-                key={doc.id}
-                id={doc.id}
-                title={doc.title}
-                url={doc.url}
-                content={doc.content}
-                read={doc.read}
-                onMarkAsRead={handleMarkAsRead}
-              />
-            ))}
+          {sortedResults(results).map((doc: any) => (
+            <DocumentCard
+              key={doc.id}
+              id={doc.id}
+              title={doc.title}
+              url={doc.url}
+              content={doc.content}
+              read={doc.read}
+              onMarkAsRead={handleMarkAsRead}
+            />
+          ))}
         </div>
       )}
     </div>
