@@ -1,3 +1,6 @@
+let DEV_MODE = true;
+let API_URL = DEV_MODE ? "http://localhost:8080" : "https://foundry-production-7176.up.railway.app";
+
 // Create context menu on installation
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -43,7 +46,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           const accessToken = params.get("access_token");
 
           // Sign in with backend
-          fetch("http://localhost:8080/api/signin", {
+          fetch(`${API_URL}/api/signin`, {
             method: "GET", 
             headers: {
               "Authorization": `Bearer ${accessToken}`,
@@ -53,7 +56,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           .then(user => {
             chrome.storage.local.set({ user: user }, () => {
               // After storing user, proceed with saving the page
-              fetch("http://localhost:8080/api/remember", {
+              fetch(`${API_URL}/api/remember`, {
                 method: "POST",
                 headers: {
                   "Authorization": `Bearer ${user.token}`,
@@ -104,7 +107,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       }
 
       // Verify token is still valid
-      fetch("http://localhost:8080/api/verifytoken", {
+      fetch(`${API_URL}/api/verifytoken`, {
         method: "GET",
         headers: {
           "Authorization": `Bearer ${result.user.token}`,
@@ -175,7 +178,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           console.log("Scraped content:", scrapedContent);
 
           // Send scraped content to backend with user's JWT token
-          fetch("http://localhost:8080/api/remember", {
+          fetch(`${API_URL}/api/remember`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

@@ -1,6 +1,8 @@
 /*
 Foundry Extension - Google Auth via launchWebAuthFlow
 */
+let DEV_MODE = true;
+let API_URL = DEV_MODE ? "http://localhost:8080" : "https://foundry-production-7176.up.railway.app";
 
 document.getElementById("loginBtn").addEventListener("click", () => {
   const clientId = "634531581191-h4u6sth79fvsobc80r6ube6rjv5t9j50.apps.googleusercontent.com";
@@ -27,7 +29,7 @@ document.getElementById("loginBtn").addEventListener("click", () => {
     const accessToken = params.get("access_token");
     console.log("Access token:", accessToken);
 
-    fetch("http://localhost:8080/api/signin", {
+    fetch(`${API_URL}/api/signin`, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
@@ -78,7 +80,7 @@ document.addEventListener('DOMContentLoaded', function() {
   chrome.storage.local.get(['user'], function(result) {
     if (result.user && result.user.token) {
       // Verify the token is still valid
-      fetch("http://localhost:8080/api/verifytoken", {
+      fetch(`${API_URL}/api/verifytoken`, {
         method: "GET",
         headers: {
           "Authorization": `Bearer ${result.user.token}`,
@@ -141,7 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
             rememberSiteBtn.disabled = false;
           }
           // Use the existing token to get user info
-          fetch("http://localhost:8080/api/signin", {
+          fetch(`${API_URL}/api/signin`, {
             method: "GET",
             headers: {
               "Authorization": `Bearer ${token}`,
@@ -214,7 +216,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       // Send scraped content to backend
-      const response = await fetch('http://localhost:8080/api/remember', {
+      const response = await fetch(`${API_URL}/api/remember`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
