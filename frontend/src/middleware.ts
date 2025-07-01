@@ -9,7 +9,7 @@ export async function middleware(request: NextRequest) {
   console.log('Middleware running for path:', path)
 
   // Define public paths that don't require authentication
-  const isPublicPath = path === '/signin' || path === '/signup'
+  const isPublicPath = path === '/signin' || path === '/signup' || path === '/policy'
 
   // Get the session token using NextAuth
   const session = await getToken({ 
