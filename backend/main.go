@@ -14,11 +14,14 @@ import (
 )
 
 func main() {
-	// Load .env file
-	if err := godotenv.Load(".env"); err != nil {
-		log.Fatal("Error loading .env file")
-	} else {
-		fmt.Println("Env file loaded")
+	// Load .env file only for local development
+	if os.Getenv("RAILWAY_STATIC_URL") == "" {
+		// local dev only
+		if err := godotenv.Load(".env"); err != nil {
+			log.Println("Warning: could not load .env file")
+		} else {
+			log.Println("Loaded .env file for local development")
+		}
 	}
 
 	// Initialize JWT
