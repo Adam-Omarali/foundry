@@ -1,4 +1,4 @@
-let DEV_MODE = true;
+let DEV_MODE = false;
 let API_URL = DEV_MODE ? "http://localhost:8080" : "https://foundry-production-7176.up.railway.app";
 
 // Create context menu on installation

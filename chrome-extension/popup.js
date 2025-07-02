@@ -1,7 +1,7 @@
 /*
 Foundry Extension - Google Auth via launchWebAuthFlow
 */
-let DEV_MODE = true;
+let DEV_MODE = false;
 let API_URL = DEV_MODE ? "http://localhost:8080" : "https://foundry-production-7176.up.railway.app";
 
 document.getElementById("loginBtn").addEventListener("click", () => {

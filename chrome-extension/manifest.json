@@ -46,6 +46,6 @@
     ]
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.googleapis.com https://apis.google.com https://www.gstatic.com http://localhost:8080"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.googleapis.com https://apis.google.com https://www.gstatic.com http://localhost:8080 https://foundry-production-7176.up.railway.app"
   }
 }
