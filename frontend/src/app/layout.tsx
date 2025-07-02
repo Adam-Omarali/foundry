@@ -28,6 +28,7 @@ export const metadata: Metadata = {
     "knowledge management",
     "workflow optimization",
     "digital organization",
+    "tab cleaner",
   ],
   authors: [{ name: "Foundry Team" }],
   creator: "Foundry",
