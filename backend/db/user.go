@@ -36,8 +36,7 @@ func InsertUser(email string, plan string) User {
 	query := `
 	INSERT INTO users (user_email, plan)
 	VALUES ($1, $2)
-	ON CONFLICT (user_email) DO UPDATE SET
-		plan = EXCLUDED.plan
+	ON CONFLICT (user_email) DO NOTHING
 	RETURNING id
 	`
 
