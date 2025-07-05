@@ -36,14 +36,17 @@ export default function Home() {
   const handleKeyPress = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && query.trim() && jwt) {
       try {
-        const response = await fetch("http://localhost:8080/api/documents", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${jwt}`,
-          },
-          body: JSON.stringify({ query: query.trim() }),
-        });
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/documents`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${jwt}`,
+            },
+            body: JSON.stringify({ query: query.trim() }),
+          }
+        );
 
         if (!response.ok) {
           throw new Error("Failed to fetch documents");
@@ -62,14 +65,17 @@ export default function Home() {
     if (!jwt) return;
 
     try {
-      const response = await fetch("http://localhost:8080/api/documents/read", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${jwt}`,
-        },
-        body: JSON.stringify({ document_id: documentId }),
-      });
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/documents/read`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({ document_id: documentId }),
+        }
+      );
 
       if (!response.ok) {
         throw new Error("Failed to mark document as read");
