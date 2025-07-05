@@ -42,7 +42,10 @@ func VerifyGoogleToken(token string) (map[string]interface{}, error) {
 	}
 
 	// Insert new user or update existing user's last sign-in
-	db.InsertUser(email, "free")
+	userId := db.GetUserId(email)
+	if userId == -1 {
+		db.InsertUser(email, "free")
+	}
 	db.SignInUser(email)
 
 	return info, nil

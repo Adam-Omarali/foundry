@@ -92,7 +92,7 @@ func GetUserId(email string) int {
 	query := `
 	SELECT id FROM users WHERE user_email = $1
 	`
-	var id int
+	var id int = -1
 	err := database.QueryRow(query, email).Scan(&id)
 	if err != nil {
 		log.Fatal("Error getting user id:", err)
