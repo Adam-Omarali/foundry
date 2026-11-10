@@ -1,0 +1,17 @@
+# Two hostnames, not one: NextAuth owns /api/auth/* on the frontend and the Go
+# API also has /api/auth/google, so path-based routing on one host would clash.
+#
+# {$VAR} is filled from Caddy's environment (set in docker-compose.yaml).
+# An https:// address makes Caddy fetch and renew a Let's Encrypt cert for it
+# automatically, and redirect http -> https. Needs ports 80 + 443 open and
+# DNS for both hostnames pointing at this box (sslip.io works without a domain).
+
+{$PUBLIC_APP_URL} {
+	encode zstd gzip
+	reverse_proxy frontend:3000
+}
+
+{$PUBLIC_API_URL} {
+	encode zstd gzip
+	reverse_proxy api:8080
+}

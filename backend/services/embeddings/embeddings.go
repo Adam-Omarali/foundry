@@ -2,7 +2,10 @@ package embeddings
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 
 	"google.golang.org/genai"
 )
@@ -10,58 +13,42 @@ import (
 // EmbeddingService handles text embeddings using Google's Gemini API
 type EmbeddingService struct {
 	client *genai.Client
+	model  string
 }
 
-// NewEmbeddingService creates a new embedding service instance
+// NewEmbeddingService creates a new embedding service instance. The model is
+// read here, not in a package-level var: package vars initialize before main()
+// loads .env, so `go run` would see an empty value.
 func NewEmbeddingService(apiKey string) (*EmbeddingService, error) {
-	ctx := context.Background()
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+	model := os.Getenv("GEMINI_EMBEDDING_MODEL")
+	if model == "" {
+		return nil, errors.New("GEMINI_EMBEDDING_MODEL is not set")
+	}
+
+	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini client: %v", err)
+		return nil, fmt.Errorf("creating Gemini client: %w", err)
 	}
 
-	return &EmbeddingService{
-		client: client,
-	}, nil
+	return &EmbeddingService{client: client, model: model}, nil
 }
 
-// GetEmbedding generates embeddings for the given text
+// GetEmbedding returns the embedding vector for text.
 func (s *EmbeddingService) GetEmbedding(ctx context.Context, text string) ([]float32, error) {
-	contents := []*genai.Content{
-		genai.NewContentFromText(text, genai.RoleUser),
-	}
+	contents := []*genai.Content{genai.NewContentFromText(text, genai.RoleUser)}
 
-	result, err := s.client.Models.EmbedContent(ctx,
-		"gemini-embedding-exp-03-07",
-		contents,
-		nil,
-	)
+	result, err := s.client.Models.EmbedContent(ctx, s.model, contents, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate embedding: %v", err)
+		return nil, fmt.Errorf("embedding with model %s: %w", s.model, err)
 	}
-
 	if len(result.Embeddings) == 0 {
-		return nil, fmt.Errorf("no embeddings returned")
+		return nil, fmt.Errorf("embedding with model %s: no embeddings returned", s.model)
 	}
 
-	fmt.Println("Length of embeddings:", len(result.Embeddings[0].Values))
-
-	return result.Embeddings[0].Values, nil
-}
-
-func (s *EmbeddingService) GetEmbeddingArray(ctx context.Context, text string) ([]float32, error) {
-	embeddings, err := s.GetEmbedding(ctx, text)
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]float32, len(embeddings))
-	for i, v := range embeddings {
-		result[i] = float32(v)
-	}
-
-	return result, nil
+	values := result.Embeddings[0].Values
+	slog.DebugContext(ctx, "embedding generated", "model", s.model, "dims", len(values))
+	return values, nil
 }

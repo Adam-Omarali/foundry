@@ -1,69 +1,29 @@
-let DEV_MODE = false;
-let API_URL = DEV_MODE ? "http://localhost:8080" : "https://foundry-production-7176.up.railway.app";
+importScripts("auth.js"); // API_URL, signInWithGoogle
 
 // Authentication function that can be reused
 function authenticateUser(callback) {
-  const clientId = "634531581191-h4u6sth79fvsobc80r6ube6rjv5t9j50.apps.googleusercontent.com";
-  const redirectUri = chrome.identity.getRedirectURL();
-  const scopes = ["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"];
-  const authUrl = `https://accounts.google.com/o/oauth2/auth?client_id=${clientId}` +
-                `&response_type=token` +
-                `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-                `&scope=${encodeURIComponent(scopes.join(" "))}` +
-                `&prompt=consent`;
-
-  chrome.identity.launchWebAuthFlow({
-    url: authUrl,
-    interactive: true
-  }, function(redirectUrl) {
-    if (chrome.runtime.lastError || !redirectUrl) {
-      console.error("Auth Error:", chrome.runtime.lastError?.message);
-      
-      // Provide user-friendly error messages
-      let errorMessage = 'Authentication failed. Please try again.';
-      if (chrome.runtime.lastError?.message?.includes('not approve')) {
-        errorMessage = 'Sign-in cancelled. Please try again and allow access to continue.';
-      } else if (chrome.runtime.lastError?.message?.includes('network')) {
-        errorMessage = 'Network error. Please check your connection and try again.';
-      } else if (chrome.runtime.lastError?.message?.includes('popup')) {
-        errorMessage = 'Popup blocked. Please allow popups for this extension and try again.';
+  signInWithGoogle()
+    .then((user) => {
+      if (callback) callback(user);
+    })
+    .catch((error) => {
+      console.error("Auth Error:", error);
+      const msg = error.message || "";
+      let errorMessage = "Authentication failed. Please try again.";
+      if (msg.includes("not approve") || msg.includes("cancel")) {
+        errorMessage = "Sign-in cancelled. Please try again and allow access to continue.";
+      } else if (msg.includes("network")) {
+        errorMessage = "Network error. Please check your connection and try again.";
+      } else if (msg.includes("Server sign-in failed")) {
+        errorMessage = "Failed to sign in with server. Please try again.";
       }
-      
       chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icon.png',
-        title: 'Foundry - Authentication Error',
-        message: errorMessage
-      });
-      return;
-    }
-
-    const params = new URLSearchParams(new URL(redirectUrl).hash.substring(1));
-    const accessToken = params.get("access_token");
-
-    // Sign in with backend
-    fetch(`${API_URL}/api/signin`, {
-      method: "GET", 
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-      },
-    })
-    .then(res => res.json())
-    .then(user => {
-      chrome.storage.local.set({ user: user }, () => {
-        if (callback) callback(user);
-      });
-    })
-    .catch(error => {
-      console.error('Backend signin error:', error);
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icon.png',
-        title: 'Foundry - Server Error',
-        message: 'Failed to sign in with server. Please try again.'
+        type: "basic",
+        iconUrl: "icon.png",
+        title: "Foundry - Authentication Error",
+        message: errorMessage,
       });
     });
-  });
 }
 
 // Reusable function to scrape page content
@@ -119,7 +79,7 @@ function scrapePageContent(tabId, callback) {
 
 // Reusable function to save content to backend
 function savePageContent(scrapedContent, userToken, userEmail, successMessage = 'Page saved successfully') {
-  fetch(`${API_URL}/api/remember`, {
+  fetch(`${API_URL}/api/documents`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

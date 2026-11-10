@@ -1,0 +1,113 @@
+# Docker keeps container logs forever by default; cap each service at 3 x 10MB
+# so logs can't fill the EC2 disk. Merged into each service via the YAML anchor.
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  db:
+    <<: *logging
+    image: pgvector/pgvector:pg18
+    environment:
+      # The image only reads POSTGRES_*; we map our DB_* names onto them.
+      POSTGRES_USER: ${DB_USER:-foundry}
+      POSTGRES_DB: ${DB_NAME:-foundry}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql   # PG18 layout (not .../data)
+    healthcheck:
+      # $$ = literal $ for the container's shell (not compose interpolation)
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    <<: *logging
+    image: migrate/migrate:v4.18.3
+    volumes:
+      - ./backend/migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database=postgres://${DB_USER:-foundry}:${DB_PASSWORD}@db:5432/${DB_NAME:-foundry}?sslmode=disable
+      - up
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"   # one-shot: runs, exits 0, done
+
+  api:
+    <<: *logging
+    build: ./backend
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      DB_HOST: db   # compose service name; local `go run` uses localhost
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-foundry}
+      DB_NAME: ${DB_NAME:-foundry}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY in .env}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:?set YOUTUBE_API_KEY in .env}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:?set GEMINI_EMBEDDING_MODEL in .env}
+      GEMINI_LLM_MODEL: ${GEMINI_LLM_MODEL:?set GEMINI_LLM_MODEL in .env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID}
+      GOOGLE_EXTENSION_CLIENT_ID: ${GOOGLE_EXTENSION_CLIENT_ID:-}
+      # The browser origin of the web app; the extension doesn't need CORS.
+      ALLOWED_ORIGINS: ${PUBLIC_APP_URL:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:8080:8080"   # local testing; on EC2 traffic comes via caddy
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    <<: *logging
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+    environment:
+      API_INTERNAL_URL: http://api:8080   # server-side calls stay inside Docker
+      NEXTAUTH_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID in .env}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?set GOOGLE_CLIENT_SECRET in .env}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [api]
+    restart: unless-stopped
+
+  # Only runs with the "prod" profile: on EC2 put COMPOSE_PROFILES=prod in
+  # .env (or pass --profile prod). Locally you use localhost:3000/8080 directly.
+  caddy:
+    <<: *logging
+    image: caddy:2
+    profiles: ["prod"]
+    # Not `:?` here: compose interpolates every service, even ones whose profile
+    # is off, so `:?` would break local `docker compose up`. If these are empty
+    # Caddy itself refuses to start (Caddyfile parse error), so it still fails loudly.
+    environment:
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-}
+    ports:
+      - "80:80"     # Let's Encrypt HTTP challenge + redirect to https
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # TLS certs: keep across restarts or hit Let's Encrypt rate limits
+      - caddy_config:/config
+    depends_on: [api, frontend]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

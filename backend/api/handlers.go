@@ -2,17 +2,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"foundry/backend/db"
 	"foundry/backend/middleware"
 	"foundry/backend/services/embeddings"
 	"foundry/backend/services/llm"
 	"foundry/backend/services/youtube"
 	"foundry/backend/utils"
+	"log/slog"
 	"net/http"
 	"os"
-	"strings"
+
+	"github.com/google/uuid"
 )
 
 type RememberRequest struct {
@@ -22,47 +25,63 @@ type RememberRequest struct {
 	Type    string `json:"type"`
 }
 
-func SignInHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+// requireAuth verifies the Foundry session JWT. On failure it writes a 401 and
+// returns nil, so callers just `if claims == nil { return }`.
+func requireAuth(w http.ResponseWriter, r *http.Request) *utils.FoundryClaims {
+	claims, err := middleware.Authenticate(r)
+	if err != nil {
+		http.Error(w, "Invalid or missing token", http.StatusUnauthorized)
+		return nil
+	}
+	return claims
+}
+
+// GoogleAuthHandler exchanges a Google ID token for a Foundry session JWT.
+// This is the only place a Google token is accepted, and the only place the
+// user row is created/updated on sign-in.
+//
+//	POST /api/auth/google  {"id_token": "..."}
+//	→ 200 {"token": "...", "email": "...", "expires_at": <unix seconds>}
+func GoogleAuthHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		http.Error(w, "Missing token", http.StatusUnauthorized)
+	var req struct {
+		IDToken string `json:"id_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IDToken == "" {
+		http.Error(w, "Body must be JSON with an id_token", http.StatusBadRequest)
 		return
 	}
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	user, err := middleware.VerifyGoogleToken(token)
 
+	email, err := middleware.VerifyGoogleIDToken(r.Context(), req.IDToken)
 	if err != nil {
-		fmt.Println("Error verifying token:", err)
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		slog.WarnContext(r.Context(), "google id token rejected", "err", err)
+		http.Error(w, "Invalid Google ID token", http.StatusUnauthorized)
 		return
 	}
 
-	// Check if email exists in user info
-	email, ok := user["email"].(string)
-	if !ok {
-		fmt.Println("Error: email not found in user info")
-		http.Error(w, "Invalid user info", http.StatusInternalServerError)
-		return
-	}
-
-	// Generate JWT token
-	jwt, err := utils.GenerateJWT(email)
+	user, err := db.UpsertUser(email)
 	if err != nil {
-		fmt.Println("Error generating JWT:", err)
+		slog.ErrorContext(r.Context(), "upserting user", "err", err)
+		http.Error(w, "Failed to sign in", http.StatusInternalServerError)
+		return
+	}
+
+	token, expiresAt, err := utils.GenerateJWT(user.ID, user.UserEmail)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "generating jwt", "err", err)
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 
-	// Return JWT token and email
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"token": jwt,
-		"email": email,
+	json.NewEncoder(w).Encode(map[string]any{
+		"token":      token,
+		"email":      user.UserEmail,
+		"expires_at": expiresAt.Unix(),
 	})
 }
 
@@ -72,47 +91,30 @@ func VerifyJWTHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	fmt.Println("Auth header:", authHeader)
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		http.Error(w, "Missing token", http.StatusUnauthorized)
+	claims := requireAuth(w, r)
+	if claims == nil {
 		return
 	}
 
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	user, err := utils.VerifyJWT(token)
-	if err != nil {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"email": user["email"].(string),
+		"email": claims.Email,
 	})
 }
 
-func RememberHandler(w http.ResponseWriter, r *http.Request) {
+func NewDocumentHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	fmt.Println("Auth header:", authHeader)
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		http.Error(w, "Missing token", http.StatusUnauthorized)
-		return
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	user, err := utils.VerifyJWT(token)
-	if err != nil {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
+	claims := requireAuth(w, r)
+	if claims == nil {
 		return
 	}
 
 	var req map[string]interface{}
-	err = json.NewDecoder(r.Body).Decode(&req)
+	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -120,146 +122,159 @@ func RememberHandler(w http.ResponseWriter, r *http.Request) {
 
 	var rawText string = req["raw_text"].(string)
 
+	// For videos, prefer the description from the YouTube API. If that fails
+	// (bad key, quota, private video) keep the page text the extension scraped
+	// rather than failing the save.
 	if req["type"] == "youtube" {
-		rawText = youtube.GetVideoData(strings.Split(req["url"].(string), "v=")[1])
+		if desc, err := videoDescription(r.Context(), req["url"].(string)); err != nil {
+			slog.WarnContext(r.Context(), "youtube lookup failed, using scraped page text", "err", err)
+		} else if desc != "" {
+			rawText = desc
+		}
 	}
 
 	textToSummarize := req["title"].(string) + " " + rawText
 
-	// userId := user["user_id"].(int)
-	// email := user["email"].(string)
+	// The plan can change after the JWT was issued, so read it fresh.
+	user, err := db.GetUserByID(claims.UserID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "loading user", "err", err, "user_id", claims.UserID)
+		http.Error(w, "Invalid or missing token", http.StatusUnauthorized)
+		return
+	}
 
 	// Check if user can add more documents
-	if err := db.CanAddDocument(user["user_id"].(int), user["plan"].(string)); err != nil {
+	if err := db.CanAddDocument(user.ID, user.Plan); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":   "Document limit reached",
 			"message": "You've reached your free plan limit. Please upgrade to add more documents.",
-			"plan":    user["plan"],
+			"plan":    user.Plan,
 		})
 		return
 	}
 
-	llmService, err := llm.NewLLMService(os.Getenv("GOOGLE_API_KEY"))
+	llmService, err := llm.NewLLMService(os.Getenv("GEMINI_API_KEY"))
 	if err != nil {
-		fmt.Println("Error initializing LLM service:", err)
+		slog.ErrorContext(r.Context(), "initializing llm service", "err", err)
 		http.Error(w, "Failed to initialize LLM service", http.StatusInternalServerError)
 		return
 	}
 
 	summary, err := llmService.GenerateText(r.Context(), textToSummarize)
 	if err != nil {
-		fmt.Println("Error generating summary:", err)
+		slog.ErrorContext(r.Context(), "generating summary", "err", err)
 		http.Error(w, "Failed to generate summary", http.StatusInternalServerError)
 		return
 	}
 
-	embeddingService, err := embeddings.NewEmbeddingService(os.Getenv("GOOGLE_API_KEY"))
+	embeddingService, err := embeddings.NewEmbeddingService(os.Getenv("GEMINI_API_KEY"))
 	if err != nil {
-		fmt.Println("Error initializing embedding service:", err)
+		slog.ErrorContext(r.Context(), "initializing embedding service", "err", err)
 		http.Error(w, "Failed to initialize embedding service", http.StatusInternalServerError)
 		return
 	}
 
-	embedding, err := embeddingService.GetEmbeddingArray(r.Context(), summary)
+	embedding, err := embeddingService.GetEmbedding(r.Context(), summary)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "generating embedding", "err", err)
 		http.Error(w, "Failed to generate embedding", http.StatusInternalServerError)
 		return
 	}
 
-	db.InsertDocument(user["user_id"].(int), req["title"].(string), req["url"].(string), summary, embedding)
+	db.InsertDocument(user.ID, req["title"].(string), req["url"].(string), summary, embedding)
 
-	fmt.Println("Summary:", summary)
+	slog.DebugContext(r.Context(), "document saved", "summary", summary)
 }
 
 func GetDocumentsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		http.Error(w, "Missing token", http.StatusUnauthorized)
+	claims := requireAuth(w, r)
+	if claims == nil {
 		return
 	}
 
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	user, err := utils.VerifyJWT(token)
-	if err != nil {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
+	query := r.URL.Query().Get("query")
+	if query == "" {
+		http.Error(w, "No query parameter 'query' provided", http.StatusBadRequest)
 		return
 	}
 
-	var req map[string]interface{}
-	err = json.NewDecoder(r.Body).Decode(&req)
+	embeddingService, err := embeddings.NewEmbeddingService(os.Getenv("GEMINI_API_KEY"))
 	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	query := req["query"].(string)
-
-	embeddingService, err := embeddings.NewEmbeddingService(os.Getenv("GOOGLE_API_KEY"))
-	if err != nil {
-		fmt.Println("Error initializing embedding service:", err)
+		slog.ErrorContext(r.Context(), "initializing embedding service", "err", err)
 		http.Error(w, "Failed to initialize embedding service", http.StatusInternalServerError)
 		return
 	}
 
-	embedding, err := embeddingService.GetEmbeddingArray(r.Context(), query)
+	embedding, err := embeddingService.GetEmbedding(r.Context(), query)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "generating embedding", "err", err)
 		http.Error(w, "Failed to generate embedding", http.StatusInternalServerError)
 		return
 	}
 
-	documents := db.GetDocuments(user["user_id"].(int), embedding, query)
+	documents := db.GetDocuments(claims.UserID, embedding, query)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(documents)
 }
 
-func MarkDocumentAsReadHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+// UpdateDocumentHandler applies a partial update to one of the user's documents.
+//
+//	PATCH /api/documents/{id}  {"read": true}
+//	→ 200 <updated document> | 400 bad id/field/type | 404 not found
+//
+// Updatable fields are allowlisted in db.documentUpdatableFields.
+func UpdateDocumentHandler(w http.ResponseWriter, r *http.Request) {
+	claims := requireAuth(w, r)
+	if claims == nil {
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		http.Error(w, "Missing token", http.StatusUnauthorized)
-		return
-	}
-
-	token := strings.TrimPrefix(authHeader, "Bearer ")
-	user, err := utils.VerifyJWT(token)
+	// Parse at the edge: a malformed ID is the client's fault (400), and
+	// everything below this line can trust it's a real UUID.
+	documentId, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		http.Error(w, "Invalid document id", http.StatusBadRequest)
 		return
 	}
 
-	var req map[string]interface{}
-	err = json.NewDecoder(r.Body).Decode(&req)
+	var body map[string]json.RawMessage
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		http.Error(w, "Body must be a JSON object of {field: newValue}", http.StatusBadRequest)
+		return
+	}
+	patch, err := db.ParseDocumentPatch(body)
 	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	documentId, ok := req["document_id"].(float64)
-	if !ok {
-		http.Error(w, "Missing or invalid document_id", http.StatusBadRequest)
+	doc, err := db.UpdateDocument(claims.UserID, documentId, patch)
+	if errors.Is(err, db.ErrDocumentNotFound) {
+		http.Error(w, "Document not found", http.StatusNotFound)
 		return
 	}
-
-	err = db.MarkDocumentAsRead(user["user_id"].(int), int(documentId))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.ErrorContext(r.Context(), "updating document", "err", err, "document_id", documentId)
+		http.Error(w, "Failed to update document", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Document marked as read successfully",
-	})
+	json.NewEncoder(w).Encode(doc)
+}
+
+func videoDescription(ctx context.Context, rawURL string) (string, error) {
+	id, err := youtube.VideoID(rawURL)
+	if err != nil {
+		return "", err
+	}
+	return youtube.GetVideoDescription(ctx, id)
 }

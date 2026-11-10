@@ -2,12 +2,13 @@ package db
 
 import (
 	"fmt"
-	"log"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type User struct {
-	ID                int       `json:"id"`
+	ID                uuid.UUID `json:"id"`
 	UserEmail         string    `json:"user_email"`
 	NumberOfDocuments int       `json:"num_documents"`
 	Plan              string    `json:"plan"`
@@ -27,103 +28,47 @@ func GetNumberOfUsers() int {
 	return count
 }
 
-func InsertUser(email string, plan string) User {
+const userColumns = "id, user_email, num_documents, plan, created_at, last_signin"
+
+func scanUser(row interface{ Scan(...any) error }) (User, error) {
+	var u User
+	err := row.Scan(&u.ID, &u.UserEmail, &u.NumberOfDocuments, &u.Plan, &u.CreatedAt, &u.LastSignin)
+	return u, err
+}
+
+// UpsertUser creates the user on first sign-in (free plan) or bumps
+// last_signin for an existing one, in a single atomic statement.
+func UpsertUser(email string) (User, error) {
 	database := GetDB()
 	defer database.Close()
-
-	database.Exec(`SET LOCAL request.user_email = $1`, email)
 
 	query := `
 	INSERT INTO users (user_email, plan)
-	VALUES ($1, $2)
-	ON CONFLICT (user_email) DO NOTHING
-	RETURNING id
-	`
+	VALUES ($1, 'free')
+	ON CONFLICT (user_email) DO UPDATE SET last_signin = NOW()
+	RETURNING ` + userColumns
 
-	var id int
-	err := database.QueryRow(query, email, plan).Scan(&id)
+	user, err := scanUser(database.QueryRow(query, email))
 	if err != nil {
-		log.Fatal("Error inserting/updating user:", err)
+		return User{}, fmt.Errorf("upserting user: %w", err)
 	}
-
-	var user User
-	err = database.QueryRow("SELECT id, user_email, num_documents, plan, created_at, last_signin FROM users WHERE user_email = $1", email).Scan(
-		&user.ID,
-		&user.UserEmail,
-		&user.NumberOfDocuments,
-		&user.Plan,
-		&user.CreatedAt,
-		&user.LastSignin,
-	)
-	if err != nil {
-		log.Fatal("Error getting user:", err)
-	}
-	return user
+	return user, nil
 }
 
-func SignInUser(email string) int {
+// GetUserByID returns sql.ErrNoRows (wrapped) if the user doesn't exist.
+func GetUserByID(id uuid.UUID) (User, error) {
 	database := GetDB()
 	defer database.Close()
 
-	database.Exec(`SET LOCAL request.user_email = $1`, email)
-
-	query := `
-	UPDATE users 
-	SET last_signin = NOW()
-	WHERE user_email = $1
-	RETURNING id
-	`
-
-	var id int
-	err := database.QueryRow(query, email).Scan(&id)
+	user, err := scanUser(database.QueryRow("SELECT "+userColumns+" FROM users WHERE id = $1", id))
 	if err != nil {
-		log.Fatal("Error signing in user:", err)
+		return User{}, fmt.Errorf("getting user %s: %w", id, err)
 	}
-
-	return id
-}
-
-func GetUserId(email string) int {
-	database := GetDB()
-	defer database.Close()
-
-	database.Exec(`SET LOCAL request.user_email = $1`, email)
-
-	query := `
-	SELECT id FROM users WHERE user_email = $1
-	`
-	var id int = -1
-	err := database.QueryRow(query, email).Scan(&id)
-	if err != nil {
-		log.Fatal("Error getting user id:", err)
-	}
-	return id
-}
-
-// GetUserByEmail retrieves a user by their email address
-func GetUserByEmail(email string) User {
-	database := GetDB()
-	defer database.Close()
-
-	database.Exec(`SET LOCAL request.user_email = $1`, email)
-
-	var user User
-	err := database.QueryRow("SELECT id, user_email, num_documents, plan, created_at, last_signin FROM users WHERE user_email = $1", email).Scan(
-		&user.ID,
-		&user.UserEmail,
-		&user.NumberOfDocuments,
-		&user.Plan,
-		&user.CreatedAt,
-		&user.LastSignin,
-	)
-	if err != nil {
-		log.Fatal("Error getting user by email:", err)
-	}
-	return user
+	return user, nil
 }
 
 // CanAddDocument checks if a user can add more documents based on their plan
-func CanAddDocument(userId int, plan string) error {
+func CanAddDocument(userId uuid.UUID, plan string) error {
 	database := GetDB()
 	defer database.Close()
 

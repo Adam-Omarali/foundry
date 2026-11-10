@@ -38,13 +38,6 @@
     "resources": ["utils.js", "config.js"],
     "matches": ["<all_urls>"]
   }],
-  "oauth2": {
-    "client_id": "634531581191-h4u6sth79fvsobc80r6ube6rjv5t9j50.apps.googleusercontent.com",
-    "scopes": [
-      "https://www.googleapis.com/auth/userinfo.email",
-      "https://www.googleapis.com/auth/userinfo.profile"
-    ]
-  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://www.googleapis.com https://apis.google.com https://www.gstatic.com http://localhost:8080 https://foundry-production-7176.up.railway.app"
   }

@@ -1,10 +1,16 @@
 package db
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"log/slog"
+	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -40,14 +46,14 @@ func filterStopWords(query string) string {
 }
 
 type Document struct {
-	ID      int    `json:"id"`
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Content string `json:"content"`
-	Read    bool   `json:"read"`
+	ID      uuid.UUID `json:"id"`
+	Title   string    `json:"title"`
+	URL     string    `json:"url"`
+	Content string    `json:"content"`
+	Read    bool      `json:"read"`
 }
 
-func InsertDocument(userId int, title string, url string, summary string, embedding []float32) {
+func InsertDocument(userId uuid.UUID, title string, url string, summary string, embedding []float32) {
 	database := GetDB()
 	defer database.Close()
 
@@ -76,7 +82,7 @@ func InsertDocument(userId int, title string, url string, summary string, embedd
 	}
 }
 
-func GetDocuments(userId int, embedding []float32, userQuery string) []Document {
+func GetDocuments(userId uuid.UUID, embedding []float32, userQuery string) []Document {
 	database := GetDB()
 	defer database.Close()
 
@@ -154,36 +160,104 @@ func GetDocuments(userId int, embedding []float32, userQuery string) []Document 
 		log.Fatal("Error iterating documents:", err)
 	}
 
-	fmt.Println("Documents:", documents)
+	slog.Debug("documents found", "count", len(documents))
 
 	return documents
 }
 
-func MarkDocumentAsRead(userId int, documentId int) error {
+// ErrDocumentNotFound means no document with that id belongs to the user.
+var ErrDocumentNotFound = errors.New("document not found")
+
+// updatableField describes one client-updatable document field.
+type updatableField struct {
+	column string                             // SQL column. Only ever taken from this map, never from the request.
+	parse  func(json.RawMessage) (any, error) // decodes + validates the JSON value
+}
+
+// documentUpdatableFields is the allowlist for PATCH /api/documents/{id}.
+// To make another field updatable, add one entry, e.g.
+//
+//	"title": {column: "title", parse: parseJSON[string]},
+var documentUpdatableFields = map[string]updatableField{
+	"read": {column: "read", parse: parseJSON[bool]},
+}
+
+func parseJSON[T any](raw json.RawMessage) (any, error) {
+	// json.Unmarshal turns null into the zero value without an error, so a
+	// {"read": null} would silently become false. Reject it explicitly.
+	if string(raw) == "null" {
+		return nil, errors.New("must not be null")
+	}
+	var v T
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, fmt.Errorf("wrong type: %v", err)
+	}
+	return v, nil
+}
+
+type columnValue struct {
+	column string
+	value  any
+}
+
+// DocumentPatch is a validated set of column updates.
+type DocumentPatch []columnValue
+
+// ParseDocumentPatch validates a client's {field: newValue} object: every field
+// must be in the allowlist and have the right type. Errors are client errors.
+func ParseDocumentPatch(body map[string]json.RawMessage) (DocumentPatch, error) {
+	if len(body) == 0 {
+		return nil, errors.New("no fields to update")
+	}
+	names := make([]string, 0, len(body))
+	for name := range body {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic SQL for the same set of fields
+
+	patch := make(DocumentPatch, 0, len(names))
+	for _, name := range names {
+		field, ok := documentUpdatableFields[name]
+		if !ok {
+			return nil, fmt.Errorf("field %q is not updatable", name)
+		}
+		value, err := field.parse(body[name])
+		if err != nil {
+			return nil, fmt.Errorf("field %q: %v", name, err)
+		}
+		patch = append(patch, columnValue{field.column, value})
+	}
+	return patch, nil
+}
+
+// UpdateDocument applies the patch to one of the user's documents and returns
+// the updated document, or ErrDocumentNotFound.
+func UpdateDocument(userId uuid.UUID, documentId uuid.UUID, patch DocumentPatch) (Document, error) {
 	database := GetDB()
 	defer database.Close()
 
-	database.Exec(`SET LOCAL request.user_id = $1`, userId)
+	sets := make([]string, len(patch))
+	args := make([]any, 0, len(patch)+2)
+	for i, cv := range patch {
+		sets[i] = fmt.Sprintf("%s = $%d", cv.column, i+1)
+		args = append(args, cv.value)
+	}
+	args = append(args, documentId, userId)
 
-	query := `
+	query := fmt.Sprintf(`
 	UPDATE documents
-	SET read = true
-	WHERE id = $1 AND user_id = $2
-	`
+	SET %s
+	WHERE id = $%d AND user_id = $%d
+	RETURNING id, title, url, content, read
+	`, strings.Join(sets, ", "), len(patch)+1, len(patch)+2)
 
-	result, err := database.Exec(query, documentId, userId)
+	var doc Document
+	err := database.QueryRow(query, args...).Scan(&doc.ID, &doc.Title, &doc.URL, &doc.Content, &doc.Read)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Document{}, ErrDocumentNotFound
+	}
 	if err != nil {
-		return fmt.Errorf("error updating document read status: %v", err)
+		return Document{}, fmt.Errorf("updating document: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error getting rows affected: %v", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("document not found or not owned by user")
-	}
-
-	return nil
+	return doc, nil
 }

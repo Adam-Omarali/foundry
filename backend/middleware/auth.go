@@ -1,52 +1,73 @@
 package middleware
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
-	"foundry/backend/db"
-	"io"
 	"net/http"
+	"os"
+	"slices"
+	"strings"
+
+	"foundry/backend/utils"
+
+	"google.golang.org/api/idtoken"
 )
 
-func VerifyGoogleToken(token string) (map[string]interface{}, error) {
-	res, err := http.Get("https://www.googleapis.com/oauth2/v3/userinfo?access_token=" + token)
+// Google OAuth client IDs whose ID tokens we accept (the web app's and the
+// Chrome extension's). An ID token's `aud` claim names the client it was
+// issued to; checking it is what stops a token minted for some other app from
+// being replayed against Foundry.
+var googleClientIDs []string
+
+var googleIssuers = []string{"accounts.google.com", "https://accounts.google.com"}
+
+// InitGoogleAuth reads the accepted client IDs. Call once at startup.
+//   - GOOGLE_CLIENT_ID: the web app's (also used by NextAuth). Required.
+//   - GOOGLE_EXTENSION_CLIENT_ID: the Chrome extension's. Optional; without it
+//     extension sign-ins are rejected.
+func InitGoogleAuth() error {
+	web := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+	if web == "" {
+		return errors.New("GOOGLE_CLIENT_ID environment variable is not set")
+	}
+	googleClientIDs = []string{web}
+	if ext := strings.TrimSpace(os.Getenv("GOOGLE_EXTENSION_CLIENT_ID")); ext != "" {
+		googleClientIDs = append(googleClientIDs, ext)
+	}
+	return nil
+}
+
+// VerifyGoogleIDToken checks a Google ID token's signature, expiry, issuer and
+// audience, and returns the verified email address.
+func VerifyGoogleIDToken(ctx context.Context, rawToken string) (string, error) {
+	// Empty audience: we check it ourselves below against several client IDs.
+	// idtoken.Validate checks signature + expiry, but NOT the issuer.
+	payload, err := idtoken.Validate(ctx, rawToken, "")
 	if err != nil {
-		fmt.Println("Error making request to Google:", err)
-		return nil, err
+		return "", fmt.Errorf("invalid id token: %w", err)
 	}
-	defer res.Body.Close()
-
-	if res.StatusCode != 200 {
-		body, _ := io.ReadAll(res.Body)
-		fmt.Printf("Error response from Google: %s\n", string(body))
-		return nil, fmt.Errorf("invalid token: status code %d", res.StatusCode)
+	if !slices.Contains(googleIssuers, payload.Issuer) {
+		return "", fmt.Errorf("unexpected issuer %q", payload.Issuer)
+	}
+	if !slices.Contains(googleClientIDs, payload.Audience) {
+		return "", fmt.Errorf("unexpected audience %q", payload.Audience)
 	}
 
-	var info map[string]interface{}
-	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
-		fmt.Println("Error decoding response:", err)
-		return nil, err
+	email, _ := payload.Claims["email"].(string)
+	verified, _ := payload.Claims["email_verified"].(bool)
+	if email == "" || !verified {
+		return "", errors.New("email missing or not verified")
 	}
+	return strings.ToLower(email), nil
+}
 
-	// Verify the email is verified
-	if verified, ok := info["email_verified"].(bool); !ok || !verified {
-		fmt.Println("Email not verified")
-		return nil, fmt.Errorf("email not verified")
+// Authenticate extracts the Bearer token from the request and verifies it as a
+// Foundry session JWT. It never touches the database.
+func Authenticate(r *http.Request) (*utils.FoundryClaims, error) {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok || token == "" {
+		return nil, errors.New("missing bearer token")
 	}
-
-	// Get the email
-	email, ok := info["email"].(string)
-	if !ok {
-		fmt.Println("Email not found in user info")
-		return nil, fmt.Errorf("email not found in token")
-	}
-
-	// Insert new user or update existing user's last sign-in
-	userId := db.GetUserId(email)
-	if userId == -1 {
-		db.InsertUser(email, "free")
-	}
-	db.SignInUser(email)
-
-	return info, nil
+	return utils.VerifyJWT(token)
 }

@@ -2,12 +2,12 @@
 import { cn } from "@/lib/utils";
 
 interface DocumentCardProps {
-  readonly id: number;
+  readonly id: string;
   readonly title: string;
   readonly url: string;
   readonly content: string;
   readonly read: boolean;
-  readonly onMarkAsRead?: (id: number) => void;
+  readonly onMarkAsRead?: (id: string) => void;
 }
 
 export function DocumentCard({

@@ -36,16 +36,10 @@ export default function Home() {
   const handleKeyPress = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && query.trim() && jwt) {
       try {
+        const params = new URLSearchParams({ query: query.trim() });
         const response = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/documents`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${jwt}`,
-            },
-            body: JSON.stringify({ query: query.trim() }),
-          }
+          `${process.env.NEXT_PUBLIC_API_URL}/api/documents?${params}`,
+          { headers: { Authorization: `Bearer ${jwt}` } }
         );
 
         if (!response.ok) {
@@ -61,19 +55,19 @@ export default function Home() {
     }
   };
 
-  const handleMarkAsRead = async (documentId: number) => {
+  const handleMarkAsRead = async (documentId: string) => {
     if (!jwt) return;
 
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/documents/read`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/documents/${documentId}`,
         {
-          method: "POST",
+          method: "PATCH", // must be uppercase: fetch doesn't normalize "patch"
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${jwt}`,
           },
-          body: JSON.stringify({ document_id: documentId }),
+          body: JSON.stringify({ read: true }),
         }
       );
 

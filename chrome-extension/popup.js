@@ -1,62 +1,19 @@
 /*
-Foundry Extension - Google Auth via launchWebAuthFlow
+Foundry Extension popup. API_URL and signInWithGoogle come from auth.js,
+loaded before this script in popup.html.
 */
-let DEV_MODE = false;
-let API_URL = DEV_MODE ? "http://localhost:8080" : "https://foundry-production-7176.up.railway.app";
-
 document.getElementById("loginBtn").addEventListener("click", () => {
-  const clientId = "634531581191-h4u6sth79fvsobc80r6ube6rjv5t9j50.apps.googleusercontent.com";
-  const redirectUri = chrome.identity.getRedirectURL();
-  const scopes = ["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"];
-  const authUrl = `https://accounts.google.com/o/oauth2/auth?client_id=${clientId}` +
-                  `&response_type=token` +
-                  `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-                  `&scope=${encodeURIComponent(scopes.join(" "))}` +
-                  `&prompt=consent`;
-
-  console.log("Auth URL:", authUrl);
-
-  chrome.identity.launchWebAuthFlow({
-    url: authUrl,
-    interactive: true
-  }, function (redirectUrl) {
-    if (chrome.runtime.lastError || !redirectUrl) {
-      console.error("Auth Error:", chrome.runtime.lastError?.message);
-      return;
-    }
-
-    const params = new URLSearchParams(new URL(redirectUrl).hash.substring(1));
-    const accessToken = params.get("access_token");
-    console.log("Access token:", accessToken);
-
-    fetch(`${API_URL}/api/signin`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-      },
-    }).then((res) => res.json()).then((user) => {
-      console.log("User:", user);
-      // Store the user data with JWT token
-      chrome.storage.local.set({ user: user }, function() {
-        console.log('User data saved');
-      });
-      document.getElementById("status").innerText = `Signed in as ${user.email}`;
+  const statusElement = document.getElementById("status");
+  signInWithGoogle()
+    .then((user) => {
+      statusElement.innerText = `Signed in as ${user.email}`;
+      document.getElementById("loginBtn").style.display = 'none';
+      document.getElementById("rememberSiteBtn").disabled = false;
+    })
+    .catch((error) => {
+      console.error("Auth Error:", error);
+      statusElement.textContent = 'Sign-in failed. Please try again.';
     });
-
-    document.getElementById("loginBtn").style.display = 'none';
-    document.getElementById("rememberSiteBtn").disabled = false;
-
-    // fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    //   headers: {
-    //     Authorization: `Bearer ${accessToken}`,
-    //   },
-    // })
-    //   .then((res) => res.json())
-    //   .then((user) => {
-    //     console.log("User info:", user);
-    //     document.getElementById("status").innerText = `Signed in as ${user.email}`;
-    //   });
-  });
 });
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -122,42 +79,14 @@ document.addEventListener('DOMContentLoaded', function() {
         });
       });
     } else {
-      // No JWT token, check Google auth
-      chrome.identity.getAuthToken({ interactive: false }, function (token) {
-        if (chrome.runtime.lastError || !token) {
-          // No token exists, show login button
-          console.log("No token exists, showing login button");
-          if (loginBtn) {
-            loginBtn.style.display = 'block';
-          }
-          if (rememberSiteBtn) {
-            rememberSiteBtn.disabled = true;
-          }
-          statusElement.textContent = 'Please sign in to use the extension';
-        } else {
-          // Token exists, hide login button and update status
-          if (loginBtn) {
-            loginBtn.style.display = 'none';
-          }
-          if (rememberSiteBtn) {
-            rememberSiteBtn.disabled = false;
-          }
-          // Use the existing token to get user info
-          fetch(`${API_URL}/api/signin`, {
-            method: "GET",
-            headers: {
-              "Authorization": `Bearer ${token}`,
-            },
-          }).then((res) => res.json()).then((user) => {
-            console.log("User:", user);
-            // Store the user data with JWT token
-            chrome.storage.local.set({ user: user }, function() {
-              console.log('User data saved');
-            });
-            statusElement.innerText = `Signed in as ${user.email}`;
-          });
-        }
-      });
+      // No Foundry session stored: show the login button
+      if (loginBtn) {
+        loginBtn.style.display = 'block';
+      }
+      if (rememberSiteBtn) {
+        rememberSiteBtn.disabled = true;
+      }
+      statusElement.textContent = 'Please sign in to use the extension';
     }
   });
 
@@ -216,7 +145,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       // Send scraped content to backend
-      const response = await fetch(`${API_URL}/api/remember`, {
+      const response = await fetch(`${API_URL}/api/documents`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

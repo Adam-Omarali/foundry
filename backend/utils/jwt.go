@@ -6,10 +6,13 @@ import (
 	"os"
 	"time"
 
-	"foundry/backend/db"
-
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
+
+// SessionTTL is how long a Foundry session lasts. The frontend stores the
+// expiry with the session and treats the user as signed out after it.
+const SessionTTL = 30 * 24 * time.Hour
 
 var jwtSecret []byte
 
@@ -24,43 +27,41 @@ func InitializeJWT() error {
 }
 
 type FoundryClaims struct {
-	Email string `json:"email"`
+	UserID uuid.UUID `json:"uid"`
+	Email  string    `json:"email"`
 	jwt.RegisteredClaims
 }
 
-// Generate JWT with 24h expiration
-func GenerateJWT(email string) (string, error) {
+// GenerateJWT issues a Foundry session token and returns it with its expiry.
+func GenerateJWT(userID uuid.UUID, email string) (string, time.Time, error) {
+	now := time.Now()
+	expiresAt := now.Add(SessionTTL)
 	claims := FoundryClaims{
-		Email: email,
+		UserID: userID,
+		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtSecret)
+	return signed, expiresAt, err
 }
 
-// Verify JWT
-func VerifyJWT(tokenStr string) (map[string]interface{}, error) {
-	token, err := jwt.ParseWithClaims(tokenStr, &FoundryClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
-	})
-
-	if claims, ok := token.Claims.(*FoundryClaims); ok && token.Valid {
-		userId := db.SignInUser(claims.Email)
-
-		// Get user information including plan
-		user := db.GetUserByEmail(claims.Email)
-
-		ret := map[string]interface{}{
-			"user_id": userId,
-			"email":   claims.Email,
-			"plan":    user.Plan,
-		}
-		return ret, nil
-	} else {
+// VerifyJWT checks the signature (HS256 only) and expiry. No database access.
+func VerifyJWT(tokenStr string) (*FoundryClaims, error) {
+	claims := &FoundryClaims{}
+	_, err := jwt.ParseWithClaims(tokenStr, claims,
+		func(*jwt.Token) (interface{}, error) { return jwtSecret, nil },
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithExpirationRequired(),
+	)
+	if err != nil {
 		return nil, err
 	}
+	if claims.UserID == uuid.Nil {
+		return nil, fmt.Errorf("token has no user id")
+	}
+	return claims, nil
 }
